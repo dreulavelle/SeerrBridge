@@ -1,4 +1,9 @@
-discord.py==2.3.2
-selenium==4.19.0
-python-dotenv==0.19.2
-inflect==7.4.0
+fastapi
+pydantic
+loguru
+beautifulsoup4
+requests
+ratelimit
+python-dotenv
+rank-torrent-name
+uvicorn
