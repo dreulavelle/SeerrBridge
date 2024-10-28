@@ -1,4 +1,4 @@
-# 🌉 SeerrBridge - Automate Your Media Fetching with DMM 🎬
+# 🌉 SeerrBridge - Automate Your Media Fetching with RD (REFACTOR - IN PROGRESS) 🎬
 
 ![seerrbridge-cover](https://github.com/user-attachments/assets/653eae72-538a-4648-b132-04faae3fb82e)
 
