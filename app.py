@@ -8,6 +8,7 @@
 # © 2024
 # -----------------------------------------------------------------------------
 
+
 import requests
 from RTN import RTN, Torrent, DefaultRanking
 from RTN.models import SettingsModel, CustomRank
