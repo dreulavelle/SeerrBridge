@@ -10,10 +10,6 @@
 
 
 import requests
-from RTN import RTN, Torrent, DefaultRanking
-from RTN.models import SettingsModel, CustomRank
-from RTN.exceptions import GarbageTorrent
-from RTN.parser import title_match
 from fastapi import FastAPI, Request
 from pydantic import BaseModel, field_validator, ValidationError
 from typing import Optional, List, Any, Dict, Literal
@@ -141,23 +137,6 @@ def search_google_for_imdb_id(query: str) -> Optional[str]:
         logger.error(f"Google search failed with status code {response.status_code}")
         return None
 
-# Define the RTN settings model
-settings = SettingsModel(
-    require=["1080p", "4K"],  # Example requirements
-    exclude=["CAM", "TS"],  # Example exclusions
-    preferred=["HDR", "BluRay"],  # Example preferences
-    custom_ranks={
-        "uhd": CustomRank(enable=True, fetch=True, rank=200),
-        "hdr": CustomRank(enable=True, fetch=True, rank=100),
-        "fhd": CustomRank(enable=True, fetch=True, rank=90),
-        "webdl": CustomRank(enable=True, fetch=True, rank=80),
-        # Add more custom rankings if needed
-    }
-)
-
-# Initialize RTN with settings and default ranking model
-rtn = RTN(settings=settings, ranking_model=DefaultRanking())
-
 # Step 3: Query Torrentio API to get available torrents
 @sleep_and_retry
 @limits(calls=MAX_CALLS_PER_MINUTE, period=60)
@@ -190,37 +169,6 @@ def check_rd_availability(info_hash: str) -> Optional[Dict[str, Any]]:
     else:
         logger.error(f"Real-Debrid instant availability failed with status code {response.status_code}")
     return None
-
-def rank_and_check_torrents(torrentio_results, correct_title):
-    """
-    Rank torrents using RTN and check if any of them match the correct title.
-    """
-    torrents = set()
-    for stream in torrentio_results['streams']:
-        info_hash = stream.get('infoHash')
-        raw_title = stream.get('title')
-
-        if not info_hash or not raw_title:
-            continue
-
-        # Check if the title matches the correct title using RTN's title_match function
-        if not title_match(correct_title, raw_title):
-            continue  # Skip torrents that don't match the title
-
-        try:
-            # Rank the torrent using RTN
-            torrent: Torrent = rtn.rank(raw_title, info_hash)
-        except GarbageTorrent:
-            logger.info(f"Skipping garbage torrent: {raw_title}")
-            continue
-
-        if torrent and torrent.fetch:
-            # If the torrent is considered valid, add it to the set
-            torrents.add(torrent)
-
-    # Sort the list of torrents based on their rank in descending order
-    sorted_torrents = sorted(list(torrents), key=lambda x: x.rank, reverse=True)
-    return sorted_torrents
 
 # Step 5: Add torrent to Real-Debrid and select specific files
 @sleep_and_retry
@@ -321,29 +269,33 @@ async def jellyseer_webhook(request: Request) -> Dict[str, Any]:
 
         movie_title = movie_details['title']
         release_year = movie_details['release_year']
-        correct_title = f"{movie_title} {release_year}"
+        logger.info(f"Movie title: {movie_title}, Release year: {release_year}")
 
-        # Step 3: Query Torrentio API to get torrents
+        # Step 3: Search Google for IMDb ID
+        logger.info(f"Searching Google for IMDb ID of {movie_title} ({release_year})...")
+        imdb_id = search_google_for_imdb_id(f"{movie_title} {release_year} imdb")
+        if not imdb_id:
+            return {"success": False, "message": "IMDb ID not found"}
+
+        logger.info(f"IMDb ID found: {imdb_id}")
+
+        # Step 4: Query Torrentio API to get torrents
         logger.info(f"Querying Torrentio API for torrents with IMDb ID: {imdb_id}...")
         torrentio_results = query_torrentio(imdb_id)
         if not torrentio_results or not torrentio_results.get('streams'):
             logger.error("No torrents found on Torrentio.")
             return {"success": False, "message": "No torrents found"}
 
-        # Step 6: Rank torrents and check for matches
-        sorted_torrents = rank_and_check_torrents(torrentio_results, correct_title)
-        if not sorted_torrents:
-            logger.error("No matching torrents found after ranking.")
-            return {"success": False, "message": "No matching torrents found"}
-
-        # Step 7: Add the highest-ranked torrent to Real-Debrid
-        for torrent in sorted_torrents:
-            info_hash = torrent.infohash
-            rd_availability = check_rd_availability(info_hash)
-            if rd_availability and rd_availability.get(info_hash):
-                # Add torrent to Real-Debrid and select file #1
-                result = add_torrent_and_select_files(info_hash, movie_title, "1")
-                return result
+        # Step 5: Check torrent availability on Real-Debrid
+        logger.info("Checking Real-Debrid availability for torrents...")
+        for stream in torrentio_results['streams']:
+            info_hash = stream.get('infoHash')
+            if info_hash:
+                rd_availability = check_rd_availability(info_hash)
+                if rd_availability and rd_availability.get(info_hash):
+                    # Add torrent to Real-Debrid and select file #1
+                    result = add_torrent_and_select_files(info_hash, movie_title, "1")
+                    return result
 
         logger.error("No torrents available on Real-Debrid.")
         return {"success": False, "message": "No torrents available on Real-Debrid"}
